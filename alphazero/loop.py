@@ -109,11 +109,12 @@ class AlphaZeroLoop:
         self.champion_provider = None
 
     # ------------------------------------------------------------------
-    def _selfplay_mcts(self, sims: int) -> AlphaZeroMCTS:
+    def _selfplay_mcts(self, sims: int, seed: Optional[int] = None) -> AlphaZeroMCTS:
         return AlphaZeroMCTS(
             self.game, self.provider,
             MCTSConfig(num_simulations=sims, c_puct=self.cfg.c_puct,
-                       batch_size=self.cfg.mcts_batch, seed=self.cfg.seed),
+                       batch_size=self.cfg.mcts_batch,
+                       seed=seed if seed is not None else self.cfg.seed),
         )
 
     def _baseline_mcts(self, sims: int) -> AlphaZeroMCTS:
@@ -375,9 +376,12 @@ class AlphaZeroLoop:
             sp_cfg = SelfplayConfig(resign_min_moves=max(4, int(0.05 * self.game.num_moves())),
                                     resign_threshold=-0.9)
             with prof.track("loop.selfplay"):
-                mcts = self._selfplay_mcts(cfg.sims)
+                # advance the seed per iteration so the Dirichlet + move-sampling
+                # streams are independent across iterations (not just within one).
+                it_seed = (cfg.seed + it) if cfg.seed is not None else None
+                mcts = self._selfplay_mcts(cfg.sims, seed=it_seed)
                 samples = run_selfplay(self.game.copy, mcts, cfg.games_per_iter,
-                                       seed=self.cfg.seed)
+                                       seed=it_seed)
             self._ingest(samples)
             with prof.track("loop.train"):
                 metrics = self._train(cfg.epochs_per_iter)
