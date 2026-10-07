@@ -69,6 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
     pl = sub.add_parser("play", help="text game")
     _common(pl)
     pl.add_argument("--botvbot", action="store_true")
+    pl.add_argument("--policy-only", action="store_true",
+                    help="bots play the net's argmax in one forward call (no MCTS)")
     pl.add_argument("--sims", type=int, default=100)
     pl.add_argument("--batch", type=int, default=16)
     pl.add_argument("--amp", default="none", choices=["none", "bf16", "fp16"])
@@ -82,6 +84,8 @@ def build_parser() -> argparse.ArgumentParser:
     gi.add_argument("--batch", type=int, default=16)
     gi.add_argument("--amp", default="auto", choices=["auto", "none", "bf16", "fp16"])
     gi.add_argument("--p2-human", action="store_true")
+    gi.add_argument("--policy-only", action="store_true",
+                    help="bots play the net's argmax in one forward call (no MCTS)")
     gi.add_argument("--selftest", type=int, default=0, help="run N frames headless then exit")
     _bot_args(gi, "p1", default_kind="random")
     _bot_args(gi, "p2", default_kind="random")
@@ -188,7 +192,8 @@ def _bot_from_args(args, game, prefix):
     name = getattr(args, f"{prefix}_name") or f"{prefix}-{kind}"
     cfg = BotConfig(name=name, kind=kind, model_path=model, num_sims=args.sims,
                     batch_size=args.batch, num_playouts=getattr(args, "playouts", 16),
-                    device=args.device, amp=args.amp, seed=args.seed)
+                    device=args.device, amp=args.amp, seed=args.seed,
+                    policy_only=getattr(args, "policy_only", False))
     return Bot(cfg, game)
 
 

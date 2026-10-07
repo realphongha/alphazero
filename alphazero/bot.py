@@ -33,6 +33,7 @@ class BotConfig:
     device: str = "auto"
     amp: str = "none"               # none | bf16 | fp16
     seed: Optional[int] = None
+    policy_only: bool = False       # skip MCTS: play the net's argmax in one forward call
 
 
 class Bot:
@@ -59,16 +60,24 @@ class Bot:
             self.provider = RandomPolicyProvider(game, cfg.num_playouts)
         else:
             raise ValueError(f"unknown bot kind '{cfg.kind}'")
-        self.mcts = AlphaZeroMCTS(
-            game, self.provider,
-            MCTSConfig(num_simulations=cfg.num_sims, c_puct=cfg.c_puct,
-                       batch_size=cfg.batch_size, seed=cfg.seed),
-        )
+        # policy-only bots skip MCTS entirely (one forward call per move)
+        self.mcts = None
+        if not cfg.policy_only:
+            self.mcts = AlphaZeroMCTS(
+                game, self.provider,
+                MCTSConfig(num_simulations=cfg.num_sims, c_puct=cfg.c_puct,
+                           batch_size=cfg.batch_size, seed=cfg.seed),
+            )
 
     def best_action(self, state: Game) -> int:
+        if self.cfg.policy_only:
+            pol, _ = self.provider.forward_batch([state])
+            return int(np.argmax(pol[0]))
         return self.mcts.best_action(state)
 
     def describe(self) -> str:
+        if self.cfg.policy_only:
+            return f"{self.cfg.name} [{self.provider.describe()}, policy-only]"
         return f"{self.cfg.name} [{self.provider.describe()}, sims={self.cfg.num_sims}]"
 
     def __repr__(self) -> str:
