@@ -415,6 +415,7 @@ class AlphaZeroLoop:
                 if evb["winrate_vs_best"] > cfg.promote_winrate:
                     self._promote()
                     best_iter = it
+                    best_score = evb["winrate_vs_best"]   # winrate that earned the promotion
                     n_promotions += 1
                     row["promoted"] = True
                     extra += "  *PROMOTED*"
