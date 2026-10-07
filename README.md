@@ -25,12 +25,30 @@ Everything in the original wishlist is implemented and tested:
 
 Python ≥ 3.10 and PyTorch (CUDA recommended) are required.
 
+### With uv (recommended)
+
+The project uses a standard PEP 621 `pyproject.toml` + a checked-in `uv.lock`, so
+`uv sync` creates a `.venv`, installs the runtime deps **and** the `alphazero`
+package itself, plus the `dev` group (pytest):
+
 ```bash
-pip install torch numpy
-pip install pygame          # only for the GUI
-pip install matplotlib      # optional, for latency charts
-# optional: for a fast compile path
-pip install -e .            # installs the package (see pyproject.toml)
+uv sync                          # core deps + dev tools (pytest)
+uv sync --extra gui              # + pygame (for `alphazero gui`)
+uv sync --extra wandb            # + Weights & Biases (for `--wandb`)
+uv sync --all-extras             # everything
+source .venv/bin/activate        # then:  alphazero ...   or   python -m alphazero ...
+```
+
+Extras are optional features; `uv sync` always pulls in core + the `dev` group.
+You can also skip the activation with `uv run`, e.g. `uv run alphazero gui --help`.
+
+### With pip
+
+```bash
+pip install torch numpy matplotlib
+pip install pygame               # only for the GUI
+pip install wandb                # optional, for `--wandb` logging
+pip install -e .                 # installs the package (see pyproject.toml)
 ```
 
 To run without installing, just add the repo to your `PYTHONPATH`; everything is
@@ -86,6 +104,64 @@ python -m alphazero benchmark   bot vs bot match (--games N)
 
 Common flags: `--game {tictactoe,gomoku9,gomoku15}`, `--device {auto,cuda,cpu}`,
 `--seed`, `--playouts` (pure‑MCTS strength), `--sims`, `--batch`, `--amp {none,bf16,fp16}`.
+
+### Full training loop (`train-loop`)
+
+The recommended way to actually train a bot: it bootstraps from strong pure‑MCTS
+self‑play, then iterates **self‑play (with the net) → D4 augment → train →
+evaluate**, keeps the best model, and logs every iteration. The evaluation compares
+the net (as player 1) against a **random** opponent and a **strong pure‑MCTS
+baseline at an equal sim budget** — a net that stops losing to the baseline is
+"at least same level as pure MCTS".
+
+```bash
+# Tic-tac-toe: reach/beat pure MCTS (small game, minutes on a GPU)
+python -m alphazero train-loop --game tictactoe --device auto --backbone resnet \
+    --channels 96 --blocks 4 --iterations 40 --games-per-iter 24 --sims 300 \
+    --playouts 20 --bootstrap-games 30 --bootstrap-sims 200 \
+    --lr 1.5e-3 --warmup 20 --batch-size 256 --amp auto --buffer-size 30000 \
+    --eval-every 10 --eval-games 16 --eval-sims 200 --baseline-sims 200 \
+    --out-dir runs/tictactoe
+
+# Gomoku 9x9 experiment (much larger; run in the background)
+python -m alphazero train-loop --game gomoku9 --device auto --backbone resnet \
+    --channels 96 --blocks 4 --iterations 8 --games-per-iter 6 --sims 100 \
+    --playouts 8 --bootstrap-games 4 --bootstrap-sims 40 \
+    --lr 1e-3 --warmup 20 --batch-size 128 --amp auto --buffer-size 20000 \
+    --eval-every 4 --eval-games 4 --eval-sims 80 --baseline-sims 80 \
+    --out-dir runs/gomoku9
+```
+
+Outputs in `--out-dir`: `best.pt` (best by head‑to‑head score), `latest.pt`,
+`train.jsonl` (per‑iteration losses + evals + latency profile), and `summary.json`.
+
+### Weights & Biases (wandb)
+
+The training loop can log to [Weights & Biases](https://wandb.ai). It's an
+optional extra — install it first:
+
+```bash
+uv sync --extra wandb            # or:  pip install wandb
+wandb login                      # once, to store your API key (skip if offline)
+```
+
+Then add `--wandb` to any `train-loop` run:
+
+```bash
+uv run alphazero train-loop --game tictactoe --device cuda:3 \
+    --iterations 40 --sims 250 --out-dir runs/ttt-wandb \
+    --wandb --wandb-project alphazero --wandb-name ttt-sims250 \
+    --wandb-tags "resnet,sims250"
+```
+
+What gets logged per iteration: `train/loss`, `train/policy_loss`,
+`train/value_loss`, `train/lr`, `train/buffer`, and — on eval steps — the
+win/loss/draw rates and score for `eval/vs_random_*` and `eval/vs_pure_*`. The
+run config (hyperparameters) is stored automatically, and the final `best.pt` is
+uploaded as a **model artifact**. Useful flags: `--wandb-project`, `--wandb-name`,
+`--wandb-tags "a,b"`, and `--wandb-offline` (log locally, no network/login — sync
+later with `wandb sync <run_dir>`). wandb is best‑effort: a wandb failure only
+warns and never aborts the run.
 
 ### GUI
 
@@ -183,6 +259,15 @@ Trainer (training.train.Trainer)   AMP + AdamW + warmup‑cosine + clip + option
 
 ---
 
+## Documentation
+
+* [`docs/alphazero-paper.md`](docs/alphazero-paper.md) — detailed notes on the
+  original AlphaZero paper (Silver et al., arXiv:1712.01815): the network, the
+  loss (eq. 1), the PUCT rule, self‑play, hyperparameters, and a table mapping
+  each part of the paper to this implementation (with the deliberate 2026
+  modernisations: warmup‑cosine + AdamW + AMP, 3‑plane input, no pass).
+* [`docs/1712.01815.pdf`](docs/1712.01815.pdf) — the original paper.
+
 ## Testing
 
 ```bash
@@ -224,8 +309,10 @@ alphazero/
 ├── bot.py          unified Bot (model or pure MCTS)
 ├── checkpoint.py   save/load model + metadata
 ├── profiling.py    latency breakdown (table/json/png)
+├── loop.py         full training loop (bootstrap->selfplay->train->eval)
 ├── gui/            pygame GUI
 ├── cli.py          command-line entry point
-└── __main__.py
-tests/              pytest suite
+├── __main__.py
+tests/              pytest suite (88 tests)
+docs/               paper notes + original PDF
 ```

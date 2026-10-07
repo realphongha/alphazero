@@ -73,6 +73,12 @@ class LoopConfig:
     out_dir: str = "runs"
     start_model: Optional[str] = None
     profile: bool = False
+    # wandb (opt-in; needs the 'wandb' extra:  uv sync --extra wandb)
+    wandb: bool = False
+    wandb_project: str = "alphazero"
+    wandb_run_name: Optional[str] = None
+    wandb_offline: bool = False
+    wandb_tags: tuple = ()
 
 
 class AlphaZeroLoop:
@@ -92,6 +98,8 @@ class AlphaZeroLoop:
         os.makedirs(cfg.out_dir, exist_ok=True)
         self.log_path = os.path.join(cfg.out_dir, "train.jsonl")
         self._t_start = time.time()
+        self._wandb = None
+        self._wandb_module = None
 
     # ------------------------------------------------------------------
     def _selfplay_mcts(self, sims: int) -> AlphaZeroMCTS:
@@ -184,6 +192,83 @@ class AlphaZeroLoop:
         with open(self.log_path, "a") as f:
             f.write(json.dumps(row) + "\n")
 
+    # ---- wandb (opt-in experiment logging) ----------------------------
+    def _wandb_init(self) -> None:
+        if not self.cfg.wandb:
+            return
+        try:
+            import wandb
+        except ImportError:
+            raise RuntimeError(
+                "wandb is enabled (--wandb) but not installed. Install with:  "
+                "uv sync --extra wandb   (or: pip install wandb)")
+        name = self.cfg.wandb_run_name or (
+            f"{self.cfg.game_name}_{self.cfg.backbone}_sims{self.cfg.sims}_{int(time.time())}")
+        try:
+            self._wandb = wandb.init(
+                project=self.cfg.wandb_project, name=name,
+                tags=list(self.cfg.wandb_tags) or None,
+                mode="offline" if self.cfg.wandb_offline else "online",
+                dir=self.cfg.out_dir,
+            )
+            self._wandb_module = wandb
+        except Exception as e:  # never let wandb kill a long run
+            print(f"[wandb] init failed ({e}); continuing without wandb", flush=True)
+            self._wandb = None
+            return
+        self._wandb.config.update({
+            "game": self.cfg.game_name, "backbone": self.cfg.backbone, "arch": self.cfg.arch,
+            "device": str(self.device), "amp": self.cfg.amp, "iterations": self.cfg.iterations,
+            "games_per_iter": self.cfg.games_per_iter, "sims": self.cfg.sims,
+            "epochs_per_iter": self.cfg.epochs_per_iter, "lr": self.cfg.lr,
+            "batch_size": self.cfg.batch_size, "buffer_size": self.cfg.buffer_size,
+            "augment": self.cfg.augment, "c_puct": self.cfg.c_puct,
+            "bootstrap_games": self.cfg.bootstrap_games, "bootstrap_sims": self.cfg.bootstrap_sims,
+            "eval_games": self.cfg.eval_games, "eval_sims": self.cfg.eval_sims,
+            "baseline_sims": self.cfg.baseline_sims, "seed": self.cfg.seed,
+        })
+        print(f"[wandb] logging -> project '{self.cfg.wandb_project}' run '{name}' "
+              f"({'offline' if self.cfg.wandb_offline else 'online'})", flush=True)
+
+    def _wandb_log(self, row: Dict) -> None:
+        if self._wandb is None:
+            return
+        try:
+            d: Dict = {"iter": row.get("iter", -1)}
+            for k in ("loss", "policy_loss", "value_loss", "final_lr", "buffer"):
+                if k in row and row[k] is not None:
+                    d[f"train/{k}"] = row[k]
+            ev = row.get("eval")
+            if ev:
+                for key in ("vs_random", "vs_pure"):
+                    e = ev[key]
+                    tot = e["win"] + e["draw"] + e["loss"]
+                    d[f"eval/{key}_win_rate"] = e["win"] / tot if tot else 0.0
+                    d[f"eval/{key}_loss_rate"] = e["loss"] / tot if tot else 0.0
+                    d[f"eval/{key}_draw_rate"] = e["draw"] / tot if tot else 0.0
+                    d[f"eval/{key}_score"] = float(e["win"] - e["loss"])
+                    d[f"eval/{key}_games"] = tot
+                if "score" in row:
+                    d["score"] = row["score"]
+            self._wandb.log(d)
+        except Exception as e:  # best-effort
+            print(f"[wandb] log failed ({e}); continuing", flush=True)
+
+    def _wandb_finish(self) -> None:
+        if self._wandb is None:
+            return
+        try:
+            best = os.path.join(self.cfg.out_dir, "best.pt")
+            if os.path.exists(best) and self._wandb_module is not None:
+                artifact = self._wandb_module.Artifact(f"{self.cfg.game_name}_best", type="model")
+                artifact.add_file(best)
+                self._wandb.log_artifact(artifact)
+            self._wandb.finish()
+        except Exception as e:
+            print(f"[wandb] finish failed ({e})", flush=True)
+        finally:
+            self._wandb = None
+
     # ------------------------------------------------------------------
     def run(self) -> None:
         cfg = self.cfg
@@ -193,6 +278,7 @@ class AlphaZeroLoop:
               f"games/iter={cfg.games_per_iter} sims={cfg.sims} "
               f"buffer={cfg.buffer_size} augment={cfg.augment}", flush=True)
         print(f"[loop] log -> {self.log_path}", flush=True)
+        self._wandb_init()
 
         if not self.buffer:
             self.bootstrap()
@@ -234,6 +320,7 @@ class AlphaZeroLoop:
                   + (f"  vs_pure {ev['vs_pure']}  vs_rnd {ev['vs_random']}  score={row['score']}"
                      if do_eval else ""), flush=True)
             self._log(row)
+            self._wandb_log(row)
             if cfg.profile and prof.snapshot():
                 self._log({"iter": it, "profile": prof.snapshot()})
                 prof.reset()
@@ -249,6 +336,8 @@ class AlphaZeroLoop:
         self._log({"summary": summary})
         with open(os.path.join(cfg.out_dir, "summary.json"), "w") as f:
             json.dump(summary, f, indent=2)
+        self._wandb_log({"iter": cfg.iterations, "eval": ev, "score": round(self._score(ev), 3)})
+        self._wandb_finish()
         print("\n=== SUMMARY ===", flush=True)
         print(json.dumps(summary, indent=2), flush=True)
         print(f"best model -> {os.path.join(cfg.out_dir, 'best.pt')}", flush=True)

@@ -125,6 +125,12 @@ def build_parser() -> argparse.ArgumentParser:
     tl.add_argument("--out-dir", default="runs")
     tl.add_argument("--start-model", default=None)
     tl.add_argument("--profile", action="store_true")
+    # wandb (opt-in; requires the 'wandb' extra:  uv sync --extra wandb)
+    tl.add_argument("--wandb", action="store_true", help="log to Weights & Biases")
+    tl.add_argument("--wandb-project", default="alphazero")
+    tl.add_argument("--wandb-name", default=None, help="run name (default: auto)")
+    tl.add_argument("--wandb-offline", action="store_true", help="offline mode (no network/login)")
+    tl.add_argument("--wandb-tags", default="", help="comma-separated run tags")
 
     be = sub.add_parser("benchmark", help="bot vs bot match")
     _common(be)
@@ -368,6 +374,9 @@ def cmd_train_loop(args) -> int:
         eval_every=args.eval_every, eval_games=args.eval_games, eval_sims=args.eval_sims,
         baseline_sims=args.baseline_sims,
         out_dir=args.out_dir, start_model=args.start_model, profile=args.profile,
+        wandb=args.wandb, wandb_project=args.wandb_project, wandb_run_name=args.wandb_name,
+        wandb_offline=args.wandb_offline,
+        wandb_tags=tuple(t for t in (s.strip() for s in args.wandb_tags.split(",")) if t),
     )
     AlphaZeroLoop(cfg).run()
     return 0

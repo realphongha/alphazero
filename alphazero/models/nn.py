@@ -15,20 +15,34 @@ from torch import nn
 
 
 def get_device(preference: Optional[str] = None) -> torch.device:
-    """Resolve a torch device. ``preference`` in {'auto','cuda','cpu'}.
+    """Resolve a torch device.
 
-    Default ('auto') uses CUDA when available, else CPU.
+    ``preference`` may be:
+      - None or 'auto'  : cuda:0 if CUDA is available, else CPU
+      - 'cpu'           : CPU
+      - 'cuda'          : cuda:0 (errors if CUDA is unavailable)
+      - 'cuda:<n>'      : a specific GPU index, e.g. 'cuda:3'
     """
-    preference = (preference or "auto").lower()
+    preference = (preference or "auto").strip().lower()
+    if preference in ("", "auto"):
+        return torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     if preference == "cpu":
         return torch.device("cpu")
     if preference == "cuda":
         if not torch.cuda.is_available():
             raise RuntimeError("cuda requested but unavailable")
-        return torch.device("cuda")
-    if not torch.cuda.is_available():
-        return torch.device("cpu")
-    return torch.device("cuda")
+        return torch.device("cuda:0")
+    if preference.startswith(("cuda:", "cuda.")):
+        idx = preference.split(":", 1)[-1].split(".", 1)[-1].strip()
+        if not idx.isdigit():
+            raise ValueError(f"invalid device '{preference}' (expected 'cuda:<n>')")
+        i = int(idx)
+        if not torch.cuda.is_available():
+            raise RuntimeError(f"cuda:{i} requested but CUDA is unavailable")
+        if i >= torch.cuda.device_count():
+            raise RuntimeError(f"cuda:{i} requested but only {torch.cuda.device_count()} GPU(s) present")
+        return torch.device(f"cuda:{i}")
+    raise ValueError(f"unknown device '{preference}' (use 'auto', 'cpu', 'cuda', or 'cuda:<n>')")
 
 
 def resolve_amp_dtype(device: torch.device, dtype_name: str) -> Optional[torch.dtype]:

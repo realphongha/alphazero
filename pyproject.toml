@@ -10,13 +10,22 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "alphazero" }]
+# Core runtime dependencies -- installed by `uv sync` (and `pip install -e .`).
 dependencies = [
     "numpy>=1.24",
     "torch>=2.0",
+    "matplotlib>=3.5",   # latency/loss plots
 ]
 
+# Optional feature extras -- opt in with:  uv sync --extra <name>
 [project.optional-dependencies]
-gui = ["pygame>=2.1", "matplotlib>=3.5"]
+gui   = ["pygame>=2.1"]          # `alphazero gui`
+wandb = ["wandb>=0.16"]          # `--wandb` experiment logging
+all   = ["pygame>=2.1", "wandb>=0.16"]
+
+# Development tooling (test runner). uv installs this group by default
+# via `uv sync`; disable with `uv sync --no-dev`.
+[dependency-groups]
 dev = ["pytest>=7.0"]
 
 [project.scripts]
@@ -30,6 +39,10 @@ packages = [
     "alphazero.training",
     "alphazero.gui",
 ]
+
+# uv: this is an installable package, not just an application.
+[tool.uv]
+package = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

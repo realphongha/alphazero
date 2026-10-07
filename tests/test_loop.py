@@ -54,6 +54,27 @@ def test_loop_no_augment_half_data(tmp_path):
     assert os.path.exists(os.path.join(str(tmp_path), "best.pt"))
 
 
+def test_wandb_disabled_is_noop(tmp_path):
+    cfg = _tiny_cfg(str(tmp_path))
+    loop = AlphaZeroLoop(cfg)
+    loop._wandb_init()                       # no-op when wandb disabled
+    assert loop._wandb is None
+    loop._wandb_log({"iter": 0, "loss": 1.0})  # safe no-op when not initialised
+    loop._wandb_finish()                      # safe no-op
+
+
+def test_wandb_enabled_requires_wandb_package(tmp_path):
+    import importlib.util
+    import pytest
+    if importlib.util.find_spec("wandb") is not None:
+        pytest.skip("wandb is installed; missing-package path not applicable")
+    cfg = _tiny_cfg(str(tmp_path))
+    cfg.wandb = True
+    loop = AlphaZeroLoop(cfg)
+    with pytest.raises(RuntimeError, match="not installed"):
+        loop._wandb_init()
+
+
 def test_loop_respects_start_model(tmp_path):
     cfg = _tiny_cfg(str(tmp_path))
     loop = AlphaZeroLoop(cfg)
