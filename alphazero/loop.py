@@ -73,6 +73,7 @@ class LoopConfig:
     eval_best_every: int = 0    # 0 = off (legacy vs_pure-score selection); else every N iters
     best_eval_games: int = 12   # games in the challenger-vs-best match
     promote_winrate: float = 0.5  # promote if challenger winrate vs best > this
+    eval_best_pure_ref: bool = False  # also run a (CPU-heavy) vs-pure reference in the gate
     # outputs
     out_dir: str = "runs"
     start_model: Optional[str] = None
@@ -242,7 +243,8 @@ class AlphaZeroLoop:
         decisive = c["win"] + c["loss"]
         c["winrate_vs_best"] = round(c["win"] / decisive, 3) if decisive else 0.5
         c["time_s"] = round(time.time() - t0, 2)
-        c["vs_pure"] = self._eval_vs(chall, self.cfg.eval_games, "pure")  # reference
+        if self.cfg.eval_best_pure_ref:      # optional (CPU-heavy) pure-MCTS reference
+            c["vs_pure"] = self._eval_vs(chall, self.cfg.eval_games, "pure")
         return c
 
     def _promote(self) -> None:

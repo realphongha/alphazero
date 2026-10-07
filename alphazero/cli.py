@@ -128,6 +128,8 @@ def build_parser() -> argparse.ArgumentParser:
     tl.add_argument("--best-eval-games", type=int, default=12)
     tl.add_argument("--promote-winrate", type=float, default=0.5,
                     help="promote if challenger winrate vs best > this")
+    tl.add_argument("--eval-best-pure-ref", action="store_true",
+                    help="also run a (CPU-heavy) vs-pure reference in the gate")
     tl.add_argument("--out-dir", default="runs")
     tl.add_argument("--start-model", default=None)
     tl.add_argument("--profile", action="store_true")
@@ -380,7 +382,7 @@ def cmd_train_loop(args) -> int:
         eval_every=args.eval_every, eval_games=args.eval_games, eval_sims=args.eval_sims,
         baseline_sims=args.baseline_sims,
         eval_best_every=args.eval_best_every, best_eval_games=args.best_eval_games,
-        promote_winrate=args.promote_winrate,
+        promote_winrate=args.promote_winrate, eval_best_pure_ref=args.eval_best_pure_ref,
         out_dir=args.out_dir, start_model=args.start_model, profile=args.profile,
         wandb=args.wandb, wandb_project=args.wandb_project, wandb_run_name=args.wandb_name,
         wandb_offline=args.wandb_offline,

@@ -106,11 +106,15 @@ def test_champion_gate_methods(tmp_path):
     loop._promote()
     for n, p in loop.champion_model.named_parameters():
         assert torch.allclose(before[n], p, atol=1e-6), n
-    # _evaluate_best returns a consistent structure
+    # _evaluate_best returns a consistent structure; pure ref off by default
     evb = loop._evaluate_best(2)
     assert evb["win"] + evb["draw"] + evb["loss"] == 2
     assert 0.0 <= evb["winrate_vs_best"] <= 1.0
-    vp = evb["vs_pure"]
+    assert "vs_pure" not in evb
+    # enabling the (cheaper-to-omit) pure-MCTS reference adds a vs_pure block
+    cfg.eval_best_pure_ref = True
+    evb2 = loop._evaluate_best(2)
+    vp = evb2["vs_pure"]
     assert vp["win"] + vp["draw"] + vp["loss"] == cfg.eval_games
 
 
