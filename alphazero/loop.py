@@ -69,6 +69,10 @@ class LoopConfig:
     eval_games: int = 40
     eval_sims: int = 120        # network's search budget when evaluating
     baseline_sims: int = 300    # strong pure-MCTS baseline search budget
+    # challenger-vs-best (self-play ladder) acceptance gate
+    eval_best_every: int = 0    # 0 = off (legacy vs_pure-score selection); else every N iters
+    best_eval_games: int = 12   # games in the challenger-vs-best match
+    promote_winrate: float = 0.5  # promote if challenger winrate vs best > this
     # outputs
     out_dir: str = "runs"
     start_model: Optional[str] = None
@@ -100,6 +104,8 @@ class AlphaZeroLoop:
         self._t_start = time.time()
         self._wandb = None
         self._wandb_module = None
+        self.champion_model = None
+        self.champion_provider = None
 
     # ------------------------------------------------------------------
     def _selfplay_mcts(self, sims: int) -> AlphaZeroMCTS:
@@ -153,40 +159,103 @@ class AlphaZeroLoop:
             return int(rng.choice(legal))
         return baseline.best_action(state)
 
+    def _eval_vs(self, model_mcts: AlphaZeroMCTS, num_games: int, kind: str) -> Dict[str, int]:
+        """``model_mcts`` (player 1) vs a 'random' or 'pure' MCTS opponent (player 2)."""
+        baseline = self._baseline_mcts(self.cfg.baseline_sims) if kind == "pure" else None
+        rng = np.random.default_rng(self.cfg.seed)
+        r = {"win": 0, "draw": 0, "loss": 0}
+        t0 = time.time()
+        for _ in range(num_games):
+            state = self.game.copy()
+            while not state.is_terminal():
+                if state.current_player() == 1:
+                    mv = model_mcts.best_action(state)
+                else:
+                    mv = self._opponent_move(kind, state, baseline, rng)
+                if mv < 0:
+                    break
+                state = state.apply(mv)
+            r[{1: "win", 0: "draw", 2: "loss"}[state.winner()]] += 1
+        r["time_s"] = round(time.time() - t0, 2)  # type: ignore[index]
+        return r
+
     def evaluate(self, num_games: int) -> Dict[str, Dict[int, int]]:
         """Model (player 1) vs {random, pure-MCTS}.  Returns win/draw/loss counts."""
-        cfg = self.cfg
-        model_mcts = self._selfplay_mcts(cfg.eval_sims)
-        baseline = self._baseline_mcts(cfg.baseline_sims)
-        rng = np.random.default_rng(cfg.seed)
-        res = {"vs_random": {"win": 0, "draw": 0, "loss": 0},
-               "vs_pure": {"win": 0, "draw": 0, "loss": 0}}
-        label = {1: "win", 0: "draw", 2: "loss"}  # model is player 1
-        t0 = time.time()
-        for g in range(num_games):
-            for kind, key in (("random", "vs_random"), ("pure", "vs_pure")):
-                state = self.game.copy()
-                while not state.is_terminal():
-                    if state.current_player() == 1:
-                        mv = model_mcts.best_action(state)
-                    else:
-                        mv = self._opponent_move(kind, state, baseline, rng)
-                    if mv < 0:
-                        break
-                    state = state.apply(mv)
-                res[key][label[state.winner()]] += 1
-        res["eval_time_s"] = round(time.time() - t0, 2)  # type: ignore[index]
+        model_mcts = self._selfplay_mcts(self.cfg.eval_sims)
+        res = {"vs_random": self._eval_vs(model_mcts, num_games, "random"),
+               "vs_pure": self._eval_vs(model_mcts, num_games, "pure")}
+        res["eval_time_s"] = round(res["vs_random"]["time_s"] + res["vs_pure"]["time_s"], 2)
         return res
 
     def _score(self, ev: Dict) -> float:
-        """Higher is better: wins vs pure MCTS - losses vs pure MCTS."""
+        """Legacy best-selection score: wins vs pure MCTS - losses vs pure MCTS."""
         vs = ev["vs_pure"]
         return float(vs["win"]) - float(vs["loss"])
 
-    def _save(self, tag: str) -> str:
+    # ---- challenger-vs-best (self-play ladder) acceptance --------------
+    def _init_champion(self) -> None:
+        """Seed the champion (current best) with the model's weights at loop start."""
+        self.champion_model = build_model(self.game, self.cfg.backbone, self.device,
+                                          cfg=self.cfg.arch)
+        self.champion_model.load_state_dict(
+            {k: v.detach().clone() for k, v in self.model.state_dict().items()})
+        self.champion_model.eval()
+        self.champion_provider = NeuralPolicyProvider(self.champion_model, self.amp_dtype)
+        self._save("best", model=self.champion_model)
+
+    def _best_mcts(self, sims: int) -> AlphaZeroMCTS:
+        return AlphaZeroMCTS(
+            self.game, self.champion_provider,
+            MCTSConfig(num_simulations=sims, c_puct=self.cfg.c_puct,
+                       batch_size=self.cfg.mcts_batch, seed=self.cfg.seed),
+        )
+
+    def _evaluate_best(self, num_games: int) -> Dict:
+        """Current model (challenger) vs current best (champion); sides alternate.
+
+        Returns challenger win/draw/loss, a winrate (wins / decisive), and a
+        pure-MCTS reference so the fixed-baseline trend is still visible.
+        """
+        chall = self._selfplay_mcts(self.cfg.eval_sims)
+        champ = self._best_mcts(self.cfg.eval_sims)
+        c = {"win": 0, "draw": 0, "loss": 0}
+        t0 = time.time()
+        for g in range(num_games):
+            state = self.game.copy()
+            chall_p1 = (g % 2 == 0)
+            while not state.is_terminal():
+                p = state.current_player()
+                if chall_p1:
+                    mv = chall.best_action(state) if p == 1 else champ.best_action(state)
+                else:
+                    mv = champ.best_action(state) if p == 1 else chall.best_action(state)
+                if mv < 0:
+                    break
+                state = state.apply(mv)
+            w = state.winner()
+            if w == 0:
+                c["draw"] += 1
+            elif w == (1 if chall_p1 else 2):
+                c["win"] += 1
+            else:
+                c["loss"] += 1
+        decisive = c["win"] + c["loss"]
+        c["winrate_vs_best"] = round(c["win"] / decisive, 3) if decisive else 0.5
+        c["time_s"] = round(time.time() - t0, 2)
+        c["vs_pure"] = self._eval_vs(chall, self.cfg.eval_games, "pure")  # reference
+        return c
+
+    def _promote(self) -> None:
+        """Champion <- current model; persist the new best."""
+        self.champion_model.load_state_dict(
+            {k: v.detach().clone() for k, v in self.model.state_dict().items()})
+        self._save("best", model=self.champion_model)
+
+    def _save(self, tag: str, model=None) -> str:
+        model = model or self.model
         meta = ModelMeta(backbone=self.cfg.backbone, n=self.game.n, m=self.game.m,
                          num_moves=self.game.num_moves(), arch=self.cfg.arch)
-        return save_model(self.model, os.path.join(self.cfg.out_dir, f"{tag}.pt"), meta)
+        return save_model(model, os.path.join(self.cfg.out_dir, f"{tag}.pt"), meta)
 
     def _log(self, row: Dict) -> None:
         with open(self.log_path, "a") as f:
@@ -250,6 +319,17 @@ class AlphaZeroLoop:
                     d[f"eval/{key}_games"] = tot
                 if "score" in row:
                     d["score"] = row["score"]
+            evb = row.get("eval_best")
+            if evb:
+                d["eval/winrate_vs_best"] = evb.get("winrate_vs_best", 0.0)
+                d["eval/challenger_win"] = evb.get("win", 0)
+                d["eval/challenger_draw"] = evb.get("draw", 0)
+                d["eval/challenger_loss"] = evb.get("loss", 0)
+                if "vs_pure" in evb:
+                    e = evb["vs_pure"]; tot = e["win"] + e["draw"] + e["loss"]
+                    d["eval/vs_pure_win_rate"] = e["win"] / tot if tot else 0.0
+            if "promoted" in row:
+                d["eval/promoted"] = 1.0
             self._wandb.log(d)
         except Exception as e:  # best-effort
             print(f"[wandb] log failed ({e}); continuing", flush=True)
@@ -282,8 +362,11 @@ class AlphaZeroLoop:
 
         if not self.buffer:
             self.bootstrap()
+        self._init_champion()
+        legacy = cfg.eval_best_every == 0   # gate off -> legacy vs_pure-score selection
         best_score = -1e9
         best_iter = -1
+        n_promotions = 0
 
         for it in range(cfg.iterations):
             t_iter = time.time()
@@ -304,21 +387,38 @@ class AlphaZeroLoop:
                 "value_loss": round(metrics.get("value_loss", float("nan")), 4),
                 "final_lr": metrics.get("final_lr"),
             }
-            do_eval = (it % cfg.eval_every == 0) or (it == cfg.iterations - 1)
-            if do_eval:
+            last = (it == cfg.iterations - 1)
+            extra = ""
+            # (a) reference eval vs {random, pure} -- logged; legacy selection source
+            if cfg.eval_every and (it % cfg.eval_every == 0 or last):
                 with prof.track("loop.eval"):
                     ev = self.evaluate(cfg.eval_games)
                 row["eval"] = ev
-                row["score"] = round(self._score(ev), 3)
-                if self._score(ev) > best_score:
-                    best_score = self._score(ev)
-                    best_iter = it
-                    self._save("best")
+                extra += f"  vs_pure {ev['vs_pure']}  vs_rnd {ev['vs_random']}"
+                if legacy:
+                    row["score"] = round(self._score(ev), 3)
+                    if self._score(ev) > best_score:
+                        best_score = self._score(ev)
+                        best_iter = it
+                        self._save("best")
                 self._save("latest")
+            # (b) challenger-vs-best gate -- promotion authority when enabled
+            if cfg.eval_best_every and (it % cfg.eval_best_every == 0 or last):
+                with prof.track("loop.eval_best"):
+                    evb = self._evaluate_best(cfg.best_eval_games)
+                row["eval_best"] = evb
+                row["winrate_vs_best"] = evb["winrate_vs_best"]
+                extra += (f"  vs_best {evb['winrate_vs_best']:.2f} "
+                          f"({evb['win']}-{evb['draw']}-{evb['loss']})")
+                if evb["winrate_vs_best"] > cfg.promote_winrate:
+                    self._promote()
+                    best_iter = it
+                    n_promotions += 1
+                    row["promoted"] = True
+                    extra += "  *PROMOTED*"
             print(f"[iter {it:03d}] {it_time:6.1f}s  buf={row['buffer']:>7d}  "
-                  f"loss={row['loss']:.3f} pol={row['policy_loss']:.3f} val={row['value_loss']:.3f}"
-                  + (f"  vs_pure {ev['vs_pure']}  vs_rnd {ev['vs_random']}  score={row['score']}"
-                     if do_eval else ""), flush=True)
+                  f"loss={row['loss']:.3f} pol={row['policy_loss']:.3f} "
+                  f"val={row['value_loss']:.3f}{extra}", flush=True)
             self._log(row)
             self._wandb_log(row)
             if cfg.profile and prof.snapshot():
@@ -330,6 +430,9 @@ class AlphaZeroLoop:
         summary = {
             "game": cfg.game_name, "backbone": cfg.backbone, "arch": cfg.arch,
             "iterations": cfg.iterations, "total_time_s": round(time.time() - self._t_start, 1),
+            "selection": "challenger-vs-best" if not legacy else "vs_pure_score",
+            "eval_best_every": cfg.eval_best_every, "best_eval_games": cfg.best_eval_games,
+            "promote_winrate": cfg.promote_winrate, "promotions": n_promotions,
             "best_iter": best_iter, "best_score": best_score, "final_eval": ev,
             "log": self.log_path,
         }

@@ -135,6 +135,23 @@ python -m alphazero train-loop --game gomoku9 --device auto --backbone resnet \
 Outputs in `--out-dir`: `best.pt` (best by head‑to‑head score), `latest.pt`,
 `train.jsonl` (per‑iteration losses + evals + latency profile), and `summary.json`.
 
+### Acceptance gate: challenger vs current best (self‑play ladder)
+
+By default `best.pt` is chosen by net‑wins vs the *fixed* pure‑MCTS baseline.
+For a true self‑improvement ladder, enable the **challenger‑vs‑best** gate: every
+`--eval-best-every` iterations the current network (**challenger**) plays
+`--best-eval-games` alternating‑side games against the running best (**champion**,
+saved as `best.pt`) *and* a pure‑MCTS reference. The challenger is promoted to
+`best.pt` only if its **winrate vs the current best > `--promote-winrate`** (default
+0.5, i.e. more wins than losses, draws excluded). `best.pt` is always the strongest
+model seen so far.
+
+```bash
+python -m alphazero train-loop --game tictactoe --device auto \
+    --iterations 40 --sims 200 --out-dir runs/ttt-ladder \
+    --eval-best-every 4 --best-eval-games 12 --promote-winrate 0.5
+```
+
 ### Weights & Biases (wandb)
 
 The training loop can log to [Weights & Biases](https://wandb.ai). It's an

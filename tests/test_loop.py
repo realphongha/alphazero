@@ -88,3 +88,48 @@ def test_loop_respects_start_model(tmp_path):
     ref = {n: p.clone() for n, p in loop.model.named_parameters()}
     for n in ref:
         assert torch.allclose(a[n], ref[n], atol=1e-6), n
+
+
+def test_champion_gate_methods(tmp_path):
+    cfg = _tiny_cfg(str(tmp_path))
+    loop = AlphaZeroLoop(cfg)
+    loop._init_champion()
+    # champion matches the model at init; best.pt written
+    for n, p in loop.model.named_parameters():
+        assert torch.allclose(p, loop.champion_model.get_parameter(n), atol=1e-6), n
+    assert os.path.exists(os.path.join(str(tmp_path), "best.pt"))
+    # perturb the model, then _promote copies it into the champion
+    with torch.no_grad():
+        for p in loop.model.parameters():
+            p.add_(0.01)
+    before = {n: p.clone() for n, p in loop.model.named_parameters()}
+    loop._promote()
+    for n, p in loop.champion_model.named_parameters():
+        assert torch.allclose(before[n], p, atol=1e-6), n
+    # _evaluate_best returns a consistent structure
+    evb = loop._evaluate_best(2)
+    assert evb["win"] + evb["draw"] + evb["loss"] == 2
+    assert 0.0 <= evb["winrate_vs_best"] <= 1.0
+    vp = evb["vs_pure"]
+    assert vp["win"] + vp["draw"] + vp["loss"] == cfg.eval_games
+
+
+def test_loop_runs_with_best_gate(tmp_path):
+    cfg = _tiny_cfg(str(tmp_path))
+    cfg.eval_best_every = 1
+    cfg.best_eval_games = 2
+    cfg.eval_every = 0   # disable the reference/legacy eval to isolate the gate
+    loop = AlphaZeroLoop(cfg)
+    loop.run()
+    with open(os.path.join(str(tmp_path), "summary.json")) as f:
+        s = json.load(f)
+    assert s["selection"] == "challenger-vs-best"
+    assert isinstance(s["promotions"], int)
+    rows = [json.loads(l) for l in open(os.path.join(str(tmp_path), "train.jsonl"))
+            if "eval_best" in json.loads(l)]
+    assert len(rows) >= 1
+    for r in rows:
+        assert 0.0 <= r["winrate_vs_best"] <= 1.0
+        eb = r["eval_best"]
+        assert eb["win"] + eb["draw"] + eb["loss"] == cfg.best_eval_games
+    assert os.path.exists(os.path.join(str(tmp_path), "best.pt"))

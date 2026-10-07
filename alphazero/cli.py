@@ -122,6 +122,12 @@ def build_parser() -> argparse.ArgumentParser:
     tl.add_argument("--eval-games", type=int, default=40)
     tl.add_argument("--eval-sims", type=int, default=120)
     tl.add_argument("--baseline-sims", type=int, default=300)
+    # challenger-vs-best (self-play ladder) acceptance gate
+    tl.add_argument("--eval-best-every", type=int, default=0,
+                    help="run challenger-vs-best every N iters (0=off, legacy selection)")
+    tl.add_argument("--best-eval-games", type=int, default=12)
+    tl.add_argument("--promote-winrate", type=float, default=0.5,
+                    help="promote if challenger winrate vs best > this")
     tl.add_argument("--out-dir", default="runs")
     tl.add_argument("--start-model", default=None)
     tl.add_argument("--profile", action="store_true")
@@ -373,6 +379,8 @@ def cmd_train_loop(args) -> int:
         buffer_size=args.buffer_size, augment=not args.no_augment,
         eval_every=args.eval_every, eval_games=args.eval_games, eval_sims=args.eval_sims,
         baseline_sims=args.baseline_sims,
+        eval_best_every=args.eval_best_every, best_eval_games=args.best_eval_games,
+        promote_winrate=args.promote_winrate,
         out_dir=args.out_dir, start_model=args.start_model, profile=args.profile,
         wandb=args.wandb, wandb_project=args.wandb_project, wandb_run_name=args.wandb_name,
         wandb_offline=args.wandb_offline,
