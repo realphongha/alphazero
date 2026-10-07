@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Data / models / artifacts
+*.npz
+*.pt
+*.pth
+*.png
+*.json
+data/
+outputs/
+runs/
+
+# Profiling / IDE / OS
+.DS_Store
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+
+# pi agent runtime
+.pi/

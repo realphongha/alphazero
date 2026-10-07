@@ -1,0 +1,9 @@
+# Core
+numpy>=1.24
+torch>=2.0
+
+# GUI (optional, but strongly recommended)
+pygame>=2.1
+
+# Latency charts (optional)
+matplotlib>=3.5
