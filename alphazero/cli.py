@@ -96,6 +96,36 @@ def build_parser() -> argparse.ArgumentParser:
     la.add_argument("--json", dest="json_out", default=None, help="dump json to path")
     la.add_argument("--plot", default=None, help="save png chart to path")
 
+    tl = sub.add_parser("train-loop", help="full iterative self-improvement training")
+    _common(tl)
+    tl.add_argument("--backbone", default="resnet", choices=["resnet", "vit"])
+    tl.add_argument("--channels", type=int, default=64, help="resnet channels")
+    tl.add_argument("--blocks", type=int, default=3, help="resnet resblocks")
+    tl.add_argument("--dim", type=int, default=128, help="vit hidden dim")
+    tl.add_argument("--depth", type=int, default=4, help="vit depth")
+    tl.add_argument("--heads", type=int, default=4, help="vit heads")
+    tl.add_argument("--patch", type=int, default=1, help="vit patch")
+    tl.add_argument("--iterations", type=int, default=40)
+    tl.add_argument("--games-per-iter", type=int, default=20)
+    tl.add_argument("--epochs-per-iter", type=int, default=2)
+    tl.add_argument("--sims", type=int, default=200, help="network self-play sims")
+    tl.add_argument("--batch", type=int, default=16, help="MCTS inference batch")
+    tl.add_argument("--bootstrap-games", type=int, default=40)
+    tl.add_argument("--bootstrap-sims", type=int, default=300)
+    tl.add_argument("--lr", type=float, default=2e-3)
+    tl.add_argument("--warmup", type=int, default=20)
+    tl.add_argument("--batch-size", type=int, default=256, help="training batch")
+    tl.add_argument("--amp", default="auto", choices=["auto", "none", "bf16", "fp16"])
+    tl.add_argument("--buffer-size", type=int, default=20000)
+    tl.add_argument("--no-augment", action="store_true")
+    tl.add_argument("--eval-every", type=int, default=5)
+    tl.add_argument("--eval-games", type=int, default=40)
+    tl.add_argument("--eval-sims", type=int, default=120)
+    tl.add_argument("--baseline-sims", type=int, default=300)
+    tl.add_argument("--out-dir", default="runs")
+    tl.add_argument("--start-model", default=None)
+    tl.add_argument("--profile", action="store_true")
+
     be = sub.add_parser("benchmark", help="bot vs bot match")
     _common(be)
     be.add_argument("--games", type=int, default=1, help="number of matches")
@@ -322,9 +352,31 @@ def cmd_benchmark(args) -> int:
     return 0
 
 
+def cmd_train_loop(args) -> int:
+    from .loop import AlphaZeroLoop, LoopConfig
+    arch = {"resnet": {"channels": args.channels, "blocks": args.blocks},
+            "vit": {"dim": args.dim, "depth": args.depth, "heads": args.heads, "patch": args.patch}}[args.backbone]
+    cfg = LoopConfig(
+        game_name=args.game, device=args.device, seed=args.seed,
+        backbone=args.backbone, arch=arch,
+        sims=args.sims, mcts_batch=args.batch, playouts=args.playouts,
+        bootstrap_games=args.bootstrap_games, bootstrap_sims=args.bootstrap_sims,
+        iterations=args.iterations, games_per_iter=args.games_per_iter,
+        epochs_per_iter=args.epochs_per_iter,
+        lr=args.lr, warmup_steps=args.warmup, batch_size=args.batch_size, amp=args.amp,
+        buffer_size=args.buffer_size, augment=not args.no_augment,
+        eval_every=args.eval_every, eval_games=args.eval_games, eval_sims=args.eval_sims,
+        baseline_sims=args.baseline_sims,
+        out_dir=args.out_dir, start_model=args.start_model, profile=args.profile,
+    )
+    AlphaZeroLoop(cfg).run()
+    return 0
+
+
 _COMMANDS = {
     "selfplay": cmd_selfplay,
     "train": cmd_train,
+    "train-loop": cmd_train_loop,
     "play": cmd_play,
     "gui": cmd_gui,
     "latency": cmd_latency,

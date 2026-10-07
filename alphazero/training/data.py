@@ -81,3 +81,58 @@ def data_shape(path: str) -> dict:
     """Peek at a ``.npz`` without loading it fully."""
     with np.load(path) as d:
         return {"n": int(d["value"].shape[0]), "obs": list(d["obs"].shape)}
+
+
+# ---------------------------------------------------------------------------
+# D4 (square-board) symmetry augmentation  [the paper uses 8 symmetries for Go]
+# ---------------------------------------------------------------------------
+_D4_PERMS = {}
+
+
+def _d4_cell_perms(n: int) -> List[np.ndarray]:
+    """8 cell permutations of the D4 group.  ``perm[dest] = source`` so that
+    ``arr[perm]`` warps an image/policy by the transform (content at source moves
+    to dest)."""
+    if n in _D4_PERMS:
+        return _D4_PERMS[n]
+
+    def idx_of(f):
+        idx = np.zeros(n * n, dtype=np.int64)
+        for r in range(n):
+            for c in range(n):
+                rp, cp = f(r, c)
+                idx[rp * n + cp] = r * n + c
+        return idx
+
+    fns = (
+        lambda r, c: (r, c),                 # identity
+        lambda r, c: (c, n - 1 - r),         # rot90
+        lambda r, c: (n - 1 - r, n - 1 - c), # rot180
+        lambda r, c: (n - 1 - c, r),         # rot270
+        lambda r, c: (r, n - 1 - c),         # flip left-right
+        lambda r, c: (n - 1 - r, c),         # flip top-bottom
+        lambda r, c: (c, r),                 # flip main diagonal
+        lambda r, c: (n - 1 - c, n - 1 - r), # flip anti-diagonal
+    )
+    perms = [idx_of(f) for f in fns]
+    _D4_PERMS[n] = perms
+    return perms
+
+
+def augment_d4(obs: np.ndarray, policy: np.ndarray):
+    """Yield the 8 D4-transformed ``(obs, policy)`` pairs (value is unchanged)."""
+    n = obs.shape[1]  # obs is (C, N, N); the board dimension is obs.shape[1]
+    perms = _d4_cell_perms(n)
+    o2 = obs.reshape(obs.shape[0], -1)
+    p2 = policy.reshape(-1)
+    for perm in perms:
+        yield o2[:, perm].reshape(obs.shape), p2[perm].reshape(policy.shape)
+
+
+def augment_samples(samples: List[Sample]) -> List[Sample]:
+    """Expand ``samples`` 8x under the D4 symmetry group (value preserved)."""
+    out: List[Sample] = []
+    for s in samples:
+        for no, np_ in augment_d4(s.obs, s.policy):
+            out.append(Sample(no, np_, s.value))
+    return out
