@@ -12,18 +12,20 @@ from typing import Optional
 
 import numpy as np
 
-from .checkpoint import load_model
 from .games.base import Game
-from .inference import NeuralPolicyProvider, RandomPolicyProvider
+from .inference import NeuralPolicyProvider, RandomPolicyProvider, OnnxPolicyProvider
 from .mcts import AlphaZeroMCTS, MCTSConfig
-from .models.nn import get_device, resolve_amp_dtype
+
+# NOTE: torch-dependent helpers (load_model, get_device, resolve_amp_dtype) are
+# imported lazily inside the 'model' branch below, so a torch-free ONNX runtime
+# (e.g. an Apple M1 Mac with only onnxruntime) can build 'onnx'/'random' bots.
 
 
 @dataclass
 class BotConfig:
     name: str = "bot"
-    kind: str = "random"            # 'model' | 'random'
-    model_path: Optional[str] = None
+    kind: str = "random"            # 'model' (torch .pt) | 'onnx' (ONNX .onnx) | 'random'
+    model_path: Optional[str] = None  # .pt for kind=model, .onnx for kind=onnx
     num_sims: int = 100
     batch_size: int = 16
     c_puct: float = 1.5
@@ -37,15 +39,23 @@ class Bot:
     def __init__(self, cfg: BotConfig, game: Game) -> None:
         self.cfg = cfg
         self.game = game
-        device = get_device(cfg.device)
-        self.device = device
         if cfg.kind == "model":
+            from .checkpoint import load_model
+            from .models.nn import get_device, resolve_amp_dtype
             if not cfg.model_path:
                 raise ValueError(f"bot '{cfg.name}' kind=model needs model_path")
+            device = get_device(cfg.device)
+            self.device = device
             model = load_model(cfg.model_path, device)
             amp_dtype = resolve_amp_dtype(device, cfg.amp)
             self.provider = NeuralPolicyProvider(model, amp_dtype)
+        elif cfg.kind == "onnx":
+            if not cfg.model_path:
+                raise ValueError(f"bot '{cfg.name}' kind=onnx needs model_path (.onnx)")
+            self.device = "cpu"
+            self.provider = OnnxPolicyProvider(cfg.model_path, game=game)
         elif cfg.kind == "random":
+            self.device = "cpu"
             self.provider = RandomPolicyProvider(game, cfg.num_playouts)
         else:
             raise ValueError(f"unknown bot kind '{cfg.kind}'")

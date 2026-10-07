@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import Iterator, List, Tuple
 
 import numpy as np
-import torch
 
 
 @dataclass
@@ -28,7 +27,8 @@ class Sample:
         self.value = float(self.value)
 
 
-def samples_to_tensors(samples: List[Sample]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def samples_to_tensors(samples: List[Sample]) -> Tuple["torch.Tensor", "torch.Tensor", "torch.Tensor"]:
+    import torch  # torch is only needed to build tensors
     obs = torch.from_numpy(np.stack([s.obs for s in samples], axis=0))
     pol = torch.from_numpy(np.stack([s.policy for s in samples], axis=0))
     val = torch.tensor([s.value for s in samples], dtype=torch.float32)

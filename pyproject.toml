@@ -21,7 +21,8 @@ dependencies = [
 [project.optional-dependencies]
 gui   = ["pygame>=2.1"]          # `alphazero gui`
 wandb = ["wandb>=0.16"]          # `--wandb` experiment logging
-all   = ["pygame>=2.1", "wandb>=0.16"]
+onnx  = ["onnxruntime>=1.15"]    # torch-free CPU inference (kind=onnx), e.g. M1 Mac
+all   = ["pygame>=2.1", "wandb>=0.16", "onnxruntime>=1.15"]
 
 # Development tooling (test runner). uv installs this group by default
 # via `uv sync`; disable with `uv sync --no-dev`.

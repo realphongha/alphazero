@@ -27,8 +27,10 @@ def _common(p: argparse.ArgumentParser) -> None:
 
 
 def _bot_args(p: argparse.ArgumentParser, prefix: str, default_kind: str = "random") -> None:
-    p.add_argument(f"--{prefix}-kind", default=default_kind, choices=["model", "random"])
-    p.add_argument(f"--{prefix}-model", default=None, help="checkpoint .pt path (kind=model)")
+    p.add_argument(f"--{prefix}-kind", default=default_kind, choices=["model", "onnx", "random"],
+                   help="model=torch .pt | onnx=ONNX .onnx (CPU, no torch) | random=pure MCTS")
+    p.add_argument(f"--{prefix}-model", default=None,
+                   help="model path: .pt (kind=model) or .onnx (kind=onnx)")
     p.add_argument(f"--{prefix}-name", default=None)
 
 
@@ -139,6 +141,12 @@ def build_parser() -> argparse.ArgumentParser:
     tl.add_argument("--wandb-name", default=None, help="run name (default: auto)")
     tl.add_argument("--wandb-offline", action="store_true", help="offline mode (no network/login)")
     tl.add_argument("--wandb-tags", default="", help="comma-separated run tags")
+
+    ex = sub.add_parser("export", help="export a .pt model to ONNX for CPU inference")
+    _common(ex)
+    ex.add_argument("--model", required=True, help="input .pt checkpoint")
+    ex.add_argument("--out", required=True, help="output .onnx path")
+    ex.add_argument("--opset", type=int, default=13)
 
     be = sub.add_parser("benchmark", help="bot vs bot match")
     _common(be)
@@ -392,6 +400,20 @@ def cmd_train_loop(args) -> int:
     return 0
 
 
+def cmd_export(args) -> int:
+    from .checkpoint import load_model
+    from .export import export_to_onnx
+    from .games import make_game
+    from .models.nn import get_device
+    game = make_game(args.game)
+    model = load_model(args.model, device=get_device("cpu"))
+    out = export_to_onnx(model, args.out, board_dim=game.n, opset=args.opset)
+    print(f"exported {args.model} -> {out}  (n={game.n}, M={game.num_moves()}, opset={args.opset})")
+    print(f"run it torch-free, e.g.:")
+    print(f"  python -m alphazero gui --game {args.game} --p2-kind onnx --p2-model {out}")
+    return 0
+
+
 _COMMANDS = {
     "selfplay": cmd_selfplay,
     "train": cmd_train,
@@ -400,6 +422,7 @@ _COMMANDS = {
     "gui": cmd_gui,
     "latency": cmd_latency,
     "benchmark": cmd_benchmark,
+    "export": cmd_export,
 }
 
 

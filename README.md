@@ -197,6 +197,40 @@ Controls: **click** a cell to move, **N** = new game, **Q**/Esc = quit. A model
 bot thinks in a background thread, so the window stays responsive. Headless
 smoke test: add `--selftest 60`.
 
+### ONNX — torch‑free CPU inference (e.g. Apple M1 / M2 Mac)
+
+To play on a machine **without PyTorch** (just `onnxruntime`), export a trained
+model once, then run the ONNX bots. The games, MCTS and ONNX inference are all
+torch‑free; only the **export** step needs PyTorch.
+
+```bash
+# 1) export (once, on any machine with torch + onnxscript)
+python -m alphazero export --game tictactoe --model runs/tictactoe/best.pt --out onnx/tictactoe.onnx
+python -m alphazero export --game gomoku9 --model runs/gomoku9-full/best.pt --out onnx/gomoku9.onnx
+```
+
+On the target machine (e.g. a Mac) you only need the lightweight deps — **no torch**:
+```bash
+pip install numpy pygame onnxruntime      # or: uv sync --extra onnx
+# copy the `alphazero/` package + the `onnx/*.onnx` files over
+```
+Then player‑vs‑bot and bot‑vs‑bot work with `--*-kind onnx`:
+```bash
+python -m alphazero gui --game tictactoe --mode pvb \
+    --p2-kind onnx --p2-model onnx/tictactoe.onnx --p2-name az --sims 100
+
+python -m alphazero gui --game tictactoe --mode botvbot \
+    --p1-kind onnx --p1-model onnx/tictactoe.onnx --p1-name az1 \
+    --p2-kind onnx --p2-model onnx/tictactoe.onnx --p2-name az2 --sims 80
+
+python -m alphazero play --game tictactoe --botvbot \
+    --p1-kind onnx --p1-model onnx/tictactoe.onnx \
+    --p2-kind onnx --p2-model onnx/tictactoe.onnx
+```
+The ONNX output matches the PyTorch model to ~1e‑7 (legal‑move masking + softmax
+are applied identically at inference time). `onnx` is a uv/pip extra:
+`uv sync --extra onnx` (or `pip install onnxruntime`).
+
 ### Latency breakdown
 
 ```bash

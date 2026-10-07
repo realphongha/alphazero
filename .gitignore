@@ -27,3 +27,4 @@ runs/
 
 # pi agent runtime
 .pi/
+onnx/
