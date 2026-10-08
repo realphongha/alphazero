@@ -30,7 +30,7 @@ from .mcts import AlphaZeroMCTS, MCTSConfig
 from .models import build_model
 from .models.nn import get_device, resolve_amp_dtype
 from .profiling import prof
-from .selfplay import SelfplayConfig, run_selfplay
+from .selfplay import SelfplayConfig, run_selfplay, run_mixed_selfplay
 from .training.data import Sample, augment_samples
 from .training.train import TrainConfig, Trainer
 
@@ -55,6 +55,8 @@ class LoopConfig:
     # self-improvement loop
     iterations: int = 40
     games_per_iter: int = 20
+    games_vs_mcts_per_iter: int = 0   # net vs pure-MCTS games/iter (multi-source data)
+    games_vs_random_per_iter: int = 0  # net vs random games/iter (multi-source data)
     epochs_per_iter: int = 2
     # training
     lr: float = 2e-3
@@ -292,6 +294,8 @@ class AlphaZeroLoop:
             "game": self.cfg.game_name, "backbone": self.cfg.backbone, "arch": self.cfg.arch,
             "device": str(self.device), "amp": self.cfg.amp, "iterations": self.cfg.iterations,
             "games_per_iter": self.cfg.games_per_iter, "sims": self.cfg.sims,
+            "games_vs_mcts_per_iter": self.cfg.games_vs_mcts_per_iter,
+            "games_vs_random_per_iter": self.cfg.games_vs_random_per_iter,
             "epochs_per_iter": self.cfg.epochs_per_iter, "lr": self.cfg.lr,
             "batch_size": self.cfg.batch_size, "buffer_size": self.cfg.buffer_size,
             "augment": self.cfg.augment, "c_puct": self.cfg.c_puct,
@@ -382,6 +386,21 @@ class AlphaZeroLoop:
                 mcts = self._selfplay_mcts(cfg.sims, seed=it_seed)
                 samples = run_selfplay(self.game.copy, mcts, cfg.games_per_iter,
                                        seed=it_seed)
+                # multi-source: also play the net against a pure-MCTS and a random
+                # opponent, recording only the net's own positions, so it sees a
+                # broader positional distribution than self-vs-self alone.
+                net_player = 1 if (it % 2 == 0) else 2
+                if cfg.games_vs_mcts_per_iter:
+                    base = self._baseline_mcts(cfg.baseline_sims)
+                    samples += run_mixed_selfplay(
+                        self.game.copy, mcts, base.best_action,
+                        cfg.games_vs_mcts_per_iter, net_player=net_player, seed=it_seed)
+                if cfg.games_vs_random_per_iter:
+                    rrng = np.random.default_rng((it_seed if it_seed is not None else 0) + 1000003)
+                    samples += run_mixed_selfplay(
+                        self.game.copy, mcts,
+                        lambda s, _r=rrng: int(_r.choice(s.legal_moves())),
+                        cfg.games_vs_random_per_iter, net_player=net_player, seed=it_seed)
             self._ingest(samples)
             with prof.track("loop.train"):
                 metrics = self._train(cfg.epochs_per_iter)

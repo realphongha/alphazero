@@ -113,6 +113,10 @@ def build_parser() -> argparse.ArgumentParser:
     tl.add_argument("--patch", type=int, default=1, help="vit patch")
     tl.add_argument("--iterations", type=int, default=40)
     tl.add_argument("--games-per-iter", type=int, default=20)
+    tl.add_argument("--games-vs-mcts", type=int, default=0,
+                    help="net vs pure-MCTS games/iter (multi-source data)")
+    tl.add_argument("--games-vs-random", type=int, default=0,
+                    help="net vs random games/iter (multi-source data)")
     tl.add_argument("--epochs-per-iter", type=int, default=2)
     tl.add_argument("--sims", type=int, default=200, help="network self-play sims")
     tl.add_argument("--batch", type=int, default=16, help="MCTS inference batch")
@@ -389,6 +393,7 @@ def cmd_train_loop(args) -> int:
         sims=args.sims, mcts_batch=args.batch, playouts=args.playouts,
         bootstrap_games=args.bootstrap_games, bootstrap_sims=args.bootstrap_sims,
         iterations=args.iterations, games_per_iter=args.games_per_iter,
+        games_vs_mcts_per_iter=args.games_vs_mcts, games_vs_random_per_iter=args.games_vs_random,
         epochs_per_iter=args.epochs_per_iter,
         lr=args.lr, warmup_steps=args.warmup, batch_size=args.batch_size, amp=args.amp,
         buffer_size=args.buffer_size, augment=not args.no_augment,

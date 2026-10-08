@@ -29,13 +29,16 @@ def test_d4_identity_first_and_distinct_orbit():
 
 def test_augment_moves_stone_and_policy_consistently():
     g = make_game("tictactoe")
-    g = g.apply(0)  # p1 stone at cell 0 (top-left)
-    obs = g.observation()
+    g = g.apply(0)  # P1 stone at corner cell 0
+    g = g.apply(8)  # P2 stone at corner cell 8 -> now P1 (mover) to move
+    obs = g.observation()  # mover (ch0)=P1 has cell 0; opponent (ch1)=P2 has cell 8
+    assert obs[0].sum() == 1.0 and obs[1].sum() == 1.0
     pol = np.zeros(9, dtype=np.float32)
     pol[0] = 1.0
     cells = []
     for no, np_ in augment_d4(obs, pol):
-        assert no[0].sum() == 1.0           # exactly one p1 stone
+        assert no[0].sum() == 1.0           # mover still has exactly one stone
+        assert no[0].sum() + no[1].sum() == 2.0  # both stones preserved
         stone_cell = int(no[0].argmax())
         cells.append(stone_cell)
         assert np_.argmax() == stone_cell    # policy mass follows the stone
@@ -64,10 +67,13 @@ def test_augment_is_a_symmetry_of_wins():
     for mv in [0, 3, 1, 4, 2]:
         g = g.apply(mv)
     assert g.winner() == 1
+    # P1 won, so it's P2's turn: mover (ch0)=P2 has 2 stones, opponent (ch1)=P1 has 3
     obs = g.observation()
+    assert obs[0].sum() == 2.0 and obs[1].sum() == 3.0
     # a policy concentrated on the winning third stone (cell 2)
     pol = np.zeros(9, dtype=np.float32)
     pol[2] = 1.0
     for no, np_ in augment_d4(obs, pol):
-        assert no[0].sum() == 3.0  # three p1 stones preserved under symmetry
+        assert no[0].sum() + no[1].sum() == 5.0  # all stones preserved under symmetry
+        assert no[1].sum() == 3.0                # winner (P1) still has its 3 stones
         assert abs(np_.sum() - 1.0) < 1e-6

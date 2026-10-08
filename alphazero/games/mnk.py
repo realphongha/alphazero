@@ -120,13 +120,24 @@ class MNKGame(Game):
 
     # -- observation ------------------------------------------------------
     def observation(self) -> np.ndarray:
-        """(3, n, n) float32: [player1, player2, legal-mask]."""
+        """(3, n, n) float32: [mover, opponent, legal-mask].
+
+        The two stone planes are *perspective-normalised*: channel 0 always holds
+        the player to move and channel 1 the opponent.  The same spatial position
+        with the colours swapped (and therefore the turn swapped) is identical
+        input, so the net learns player-independent patterns from ~2x as much data
+        as a fixed player1/player2 representation.  The value target is already
+        from the mover's perspective, so it stays a consistent function of the obs
+        with channel 0 = mover.  Channel 2 (the legal mask) is unchanged and still
+        drives the policy masking in ``predict_batch``.
+        """
         n = self.cfg.n
         size = n * n
         leg = legal_mask(self.p1, self.p2, self.cfg)
+        mover, opp = (self.p1, self.p2) if self.turn == 1 else (self.p2, self.p1)
         obs = np.zeros((3, n, n), dtype=np.float32)
-        obs[0] = _bits_to_array(self.p1, size).reshape(n, n)
-        obs[1] = _bits_to_array(self.p2, size).reshape(n, n)
+        obs[0] = _bits_to_array(mover, size).reshape(n, n)
+        obs[1] = _bits_to_array(opp, size).reshape(n, n)
         obs[2] = _bits_to_array(leg, size).reshape(n, n)
         return obs
 

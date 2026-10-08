@@ -39,7 +39,7 @@ from .inference import (
     OnnxPolicyProvider, make_provider,
 )
 from .mcts import AlphaZeroMCTS, MCTSConfig
-from .selfplay import SelfplayConfig, run_selfplay
+from .selfplay import SelfplayConfig, run_selfplay, run_mixed_selfplay
 from .profiling import prof
 
 __version__ = "0.1.0"
@@ -76,7 +76,7 @@ __all__ = [
     "OnnxPolicyProvider", "make_provider",
     "AlphaZeroMCTS", "MCTSConfig",
     "build_model", "ZeroNet", "get_device",
-    "SelfplayConfig", "run_selfplay",
+    "SelfplayConfig", "run_selfplay", "run_mixed_selfplay",
     "Trainer", "TrainConfig", "Sample", "WarmupCosineScheduler",
     "AlphaZero", "AlphaZeroAgent",
     "ModelMeta", "save_model", "load_model",
